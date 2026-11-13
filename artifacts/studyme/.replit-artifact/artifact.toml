@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "StudyMe"
+description = "A welcoming study dashboard where learners choose their education stage, explore real subject lessons and quizzes, track progress, and collect achievement tokens."
+version = "1.0.0"
+id = "artifacts/studyme"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26222
+
+[services.development]
+run = "pnpm --filter @workspace/studyme run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/studyme", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/studyme/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26222"
+BASE_PATH = "/"

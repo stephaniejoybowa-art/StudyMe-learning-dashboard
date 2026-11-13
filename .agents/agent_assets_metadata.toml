@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "60cBe4LrDCyEokuIU_2dI"
+uri = "file://generated-artifacts/studyme-source.zip"
+type = "unspecified"
+title = "StudyMe source code ZIP"
+description = "Standalone React + Vite source for the working StudyMe dashboard, including seeded lessons, quizzes, eight education stages, local achievement tokens, and setup instructions."
+logical_id = "7be63f2f-7e03-41cc-a968-1b7139cd9cc7"
+content_hash = "sha256:a938e971d718dd037c73a82045642b619a6afbdb42594107e6585927e1b53638"
+size = 227673
+mtime_ms = 1794572637996
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:2d6211ba-42c2-42ad-b678-9ce5df3248c8/7be63f2f-7e03-41cc-a968-1b7139cd9cc7/f88a8afd-5db7-460d-8854-09866409e76f"
+storage_version_token = "1794572750713050"
+content_type = "application/octet-stream"

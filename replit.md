@@ -1,44 +1,45 @@
-# [Project name]
+# StudyMe
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A browser-first study dashboard where learners work through subject lessons and quizzes, track progress, and collect achievement tokens.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/studyme run dev` — run the StudyMe preview
+- `pnpm --filter @workspace/studyme run typecheck` — check the StudyMe TypeScript
+- `pnpm --filter @workspace/studyme run build` — build the StudyMe frontend
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- pnpm workspaces, React, TypeScript, Vite
+- Learner progress and achievement tokens are saved in browser localStorage
+- No account, database, AI API key, or wallet is needed for the demo
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/studyme/` — StudyMe app and downloadable source package
+- `artifacts/studyme/src/` — app pages, learning flows, curriculum, and styles
+- `artifacts/studyme/public/studyme-logo.png` — supplied StudyMe mark
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Open directly into demo mode so the learning flow does not depend on missing authentication routes.
+- Keep curriculum and quizzes bundled so the demo works without an AI service or API key.
+- Save progress locally per browser; switching education stages does not reset it.
+- Call rewards achievement tokens in the app; do not imply they are on-chain NFTs.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Subject lessons and quizzes for learners from early years through lifelong learning.
+- Progress tracking and a collection of tokens for completed modules and passed quizzes.
+- Eight available stages: Early years, Primary, Lower secondary, Upper secondary, Vocational & technical, Undergraduate, Postgraduate, and Lifelong learning.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Use the uploaded StudyMe project files and study guide as the product reference.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Real NEAR NFT minting requires a wallet connection and deployed compatible NFT contract; these are not included in the supplied files.
 
 ## Pointers
 
