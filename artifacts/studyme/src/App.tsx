@@ -1,4 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { ClerkProvider, Show, SignIn, SignUp, useClerk, useUser } from '@clerk/react';
+import { publishableKeyFromHost } from '@clerk/react/internal';
+import { shadcn } from '@clerk/themes';
 import { ErrorBoundary } from '@/components/error-boundary';
 import NotFound from '@/pages/not-found';
 import {
@@ -6,15 +9,24 @@ import {
   CircleHelp, Clock3, Compass, GraduationCap, Layers3, Menu, RotateCcw, Settings,
   Sparkles, Target, Trophy, X,
 } from 'lucide-react';
-import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
+import { Link, Redirect, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 import { educationLevels, modules, subjects, type EducationLevel, type Module, type Question, type Subject } from '@/data/curriculum';
 
 type AchievementToken = { id: string; moduleId: string; subjectId: string; title: string; kind: 'module' | 'quiz'; points: number; earnedAt: string };
 type Progress = { learnerName: string; educationLevelId: string; completedModuleIds: string[]; quizBestScores: Record<string, number>; earnedTokens: AchievementToken[] };
-type StudyContextValue = { progress: Progress; update: (patch: Partial<Progress>) => void; reset: () => void };
+type StudyMode = 'demo' | 'account';
+type StudyContextValue = { progress: Progress; update: (patch: Partial<Progress>) => void; reset: () => void; routeBase: string; mode: StudyMode };
 
-const STORAGE_KEY = 'studyme-progress-v1';
-const initialProgress: Progress = { learnerName: 'Alex', educationLevelId: 'lifelong', completedModuleIds: [], quizBestScores: {}, earnedTokens: [] };
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+const clerkPubKey = publishableKeyFromHost(window.location.hostname, import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const initialProgress = (learnerName: string): Progress => ({
+  learnerName,
+  educationLevelId: 'lifelong',
+  completedModuleIds: [],
+  quizBestScores: {},
+  earnedTokens: [],
+});
 const StudyContext = createContext<StudyContextValue | null>(null);
 const useStudy = () => {
   const value = useContext(StudyContext);
@@ -22,17 +34,29 @@ const useStudy = () => {
   return value;
 };
 
-function Provider({ children }: { children: ReactNode }) {
+function Provider({ children, storageKey, routeBase, mode, initialName }: {
+  children: ReactNode;
+  storageKey: string;
+  routeBase: string;
+  mode: StudyMode;
+  initialName: string;
+}) {
   const [progress, setProgress] = useState<Progress>(() => {
+    const freshProgress = initialProgress(initialName);
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? { ...initialProgress, ...JSON.parse(saved) } : initialProgress;
-    } catch { return initialProgress; }
+      const saved = localStorage.getItem(storageKey);
+      return saved ? { ...freshProgress, ...JSON.parse(saved) } : freshProgress;
+    } catch { return freshProgress; }
   });
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)); }, [progress]);
+  useEffect(() => {
+    try { localStorage.setItem(storageKey, JSON.stringify(progress)); } catch { /* Storage may be disabled. */ }
+  }, [progress, storageKey]);
   const update = (patch: Partial<Progress>) => setProgress((current) => ({ ...current, ...patch }));
-  const reset = () => { setProgress(initialProgress); localStorage.removeItem(STORAGE_KEY); };
-  return <StudyContext.Provider value={{ progress, update, reset }}>{children}</StudyContext.Provider>;
+  const reset = () => {
+    setProgress(initialProgress(initialName));
+    try { localStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
+  };
+  return <StudyContext.Provider value={{ progress, update, reset, routeBase, mode }}>{children}</StudyContext.Provider>;
 }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
@@ -46,29 +70,35 @@ function levelFor(id: string): EducationLevel {
 function subjectFor(id: string): Subject | undefined { return subjects.find((subject) => subject.id === id); }
 function moduleFor(id: string): Module | undefined { return modules.find((item) => item.id === id); }
 function cx(...classes: Array<string | false | undefined>) { return classes.filter(Boolean).join(' '); }
+function appHref(routeBase: string, path = '/') { return path === '/' ? routeBase : `${routeBase}${path}`; }
+
+if (!clerkPubKey) {
+  throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY in the environment.');
+}
 
 function AppShell() {
-  const { progress } = useStudy();
-  const level = levelFor(progress.educationLevelId);
+  const { progress, routeBase, mode } = useStudy();
+  const [location] = useLocation();
   const [mobileMenu, setMobileMenu] = useState(false);
+  const level = levelFor(progress.educationLevelId);
   const nav = [
-    { href: '/', label: 'My learning', icon: Compass },
-    { href: '/achievements', label: 'Achievements', icon: Trophy },
-    { href: '/settings', label: 'Settings', icon: Settings },
+    { href: appHref(routeBase), label: 'My learning', icon: Compass },
+    { href: appHref(routeBase, '/achievements'), label: 'Achievements', icon: Trophy },
+    { href: appHref(routeBase, '/settings'), label: 'Settings', icon: Settings },
   ];
   return (
     <div className="min-h-[100dvh] bg-[#f6f5f9] text-[#29253a]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col bg-[#302a47] px-5 py-6 text-white md:flex">
-        <Link href="/" className="mb-10 flex items-center gap-3 px-2" data-testid="link-brand-home">
-          <img src="/studyme-logo.png" alt="StudyMe" className="h-12 w-12 rounded-2xl bg-white object-cover" data-testid="img-studyme-logo" />
+        <Link href={appHref(routeBase)} className="mb-10 flex items-center gap-3 px-2" data-testid="link-brand-home">
+          <img src={`${basePath}/studyme-logo.png`} alt="StudyMe" className="h-12 w-12 rounded-2xl bg-white object-cover" data-testid="img-studyme-logo" />
           <span className="font-display text-[21px] font-extrabold tracking-[-.06em]">studyme<span className="text-[#f3cb73]">.</span></span>
         </Link>
         <p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[.18em] text-[#b7b0ca]">Your space</p>
         <nav className="space-y-1">
           {nav.map(({ href, label, icon: Icon }) => {
-            const active = window.location.pathname === href || (href === '/' && window.location.pathname.startsWith('/subjects'));
+            const active = location === href || (href === appHref(routeBase) && location.startsWith(`${routeBase}/subjects`));
             return <Link key={href} href={href} data-testid={`nav-${label.toLowerCase().replaceAll(' ', '-')}`} className={cx('flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-semibold', active ? 'bg-[#49415f] text-white' : 'text-[#c9c4d5] hover:bg-[#3c3554] hover:text-white')}>
-              <Icon size={17} strokeWidth={1.9} /><span>{label}</span>{href === '/achievements' && progress.earnedTokens.length > 0 && <span className="ml-auto rounded-full bg-[#f3cb73] px-2 py-0.5 text-[10px] font-bold text-[#302a47]">{progress.earnedTokens.length}</span>}
+              <Icon size={17} strokeWidth={1.9} /><span>{label}</span>{label === 'Achievements' && progress.earnedTokens.length > 0 && <span className="ml-auto rounded-full bg-[#f3cb73] px-2 py-0.5 text-[10px] font-bold text-[#302a47]">{progress.earnedTokens.length}</span>}
             </Link>;
           })}
         </nav>
@@ -78,11 +108,11 @@ function AppShell() {
           </div>
           <div className="mb-1 truncate text-sm font-bold" data-testid="text-sidebar-level">{level.label}</div>
           <div className="text-[11px] leading-relaxed text-[#b7b0ca]">{level.ageRange} · chosen by you</div>
-          <Link href="/settings" className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-bold text-[#e1cfff]" data-testid="link-change-level">Change level <ArrowRight size={13} /></Link>
+          <Link href={appHref(routeBase, '/settings')} className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-bold text-[#e1cfff]" data-testid="link-change-level">Change level <ArrowRight size={13} /></Link>
         </div>
         <div className="mt-5 flex items-center gap-3 px-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#d4c1f5] text-sm font-extrabold text-[#3a3154]" data-testid="avatar-learner">{progress.learnerName.trim().slice(0,1).toUpperCase() || 'A'}</div>
-          <div className="min-w-0"><div className="truncate text-[13px] font-bold" data-testid="text-learner-name">{progress.learnerName || 'Learner'}</div><div className="text-[10px] text-[#c1bbcf]">Learning at your pace</div></div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#d4c1f5] text-sm font-extrabold text-[#3a3154]" data-testid="avatar-learner">{progress.learnerName.trim().slice(0, 1).toUpperCase() || 'A'}</div>
+          <div className="min-w-0"><div className="truncate text-[13px] font-bold" data-testid="text-learner-name">{progress.learnerName || 'Learner'}</div><div className="text-[10px] text-[#c1bbcf]">{mode === 'account' ? 'Signed-in learner' : 'Demo learner'}</div></div>
         </div>
       </aside>
       <div className="md:pl-[248px]">
@@ -92,18 +122,23 @@ function AppShell() {
             <span className="font-display text-sm font-bold tracking-tight md:hidden">studyme<span className="text-[#9b79cf]">.</span></span>
             <span className="hidden text-[12px] text-[#827d8e] md:inline" data-testid="text-current-level">Learning for <b className="text-[#4c465d]">{level.label}</b></span>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-[#ebe8f0] bg-white px-3 py-2 text-[11px] font-semibold text-[#655e73]" data-testid="status-token-count">
-            <Award size={15} className="text-[#b08a43]" /> <span>{progress.earnedTokens.length} tokens</span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-full border border-[#ebe8f0] bg-white px-3 py-2 text-[11px] font-semibold text-[#655e73]" data-testid="status-token-count">
+              <Award size={15} className="text-[#b08a43}" /> <span>{progress.earnedTokens.length} tokens</span>
+            </div>
+            {mode === 'account'
+              ? <LogoutButton />
+              : <Link href="/" className="rounded-full border border-[#e5dfec] bg-white px-3 py-2 text-[11px] font-bold text-[#695a7e] hover:bg-[#f5f0fa]">Exit demo</Link>}
           </div>
         </header>
-        {mobileMenu && <div className="fixed inset-x-0 top-[68px] z-30 border-b border-[#e8e4ef] bg-white px-4 py-3 shadow-lg md:hidden">{nav.map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileMenu(false)} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#554d68]" data-testid={`mobile-nav-${label.toLowerCase().replaceAll(' ','-')}`}><Icon size={17}/>{label}</Link>)}</div>}
+        {mobileMenu && <div className="fixed inset-x-0 top-[68px] z-30 border-b border-[#e8e4ef] bg-white px-4 py-3 shadow-lg md:hidden">{nav.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileMenu(false)} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#554d68]" data-testid={`mobile-nav-${label.toLowerCase().replaceAll(' ', '-')}`}><Icon size={17} />{label}</Link>)}</div>}
         <main className="mx-auto min-h-[calc(100dvh-68px)] max-w-[1400px] px-4 py-7 sm:px-7 md:px-10 md:py-9">
           <RoutedErrorBoundary><Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/subjects/:subjectId" component={SubjectPage} />
-            <Route path="/modules/:moduleId" component={ModulePage} />
-            <Route path="/achievements" component={AchievementsPage} />
-            <Route path="/settings" component={SettingsPage} />
+            <Route path={appHref(routeBase)} component={Dashboard} />
+            <Route path={appHref(routeBase, '/subjects/:subjectId')} component={SubjectPage} />
+            <Route path={appHref(routeBase, '/modules/:moduleId')} component={ModulePage} />
+            <Route path={appHref(routeBase, '/achievements')} component={AchievementsPage} />
+            <Route path={appHref(routeBase, '/settings')} component={SettingsPage} />
             <Route component={NotFound} />
           </Switch></RoutedErrorBoundary>
         </main>
@@ -117,7 +152,7 @@ function ProgressBar({ value, testId }: { value: number; testId: string }) {
 }
 
 function Dashboard() {
-  const { progress } = useStudy();
+  const { progress, routeBase } = useStudy();
   const level = levelFor(progress.educationLevelId);
   const completion = Math.round(progress.completedModuleIds.length / modules.length * 100);
   const continueModule = modules.find((item) => !progress.completedModuleIds.includes(item.id)) ?? modules[0];
@@ -129,7 +164,7 @@ function Dashboard() {
         <h1 className="font-display text-[32px] font-extrabold leading-tight tracking-[-.055em] text-[#29253a] sm:text-[40px]" data-testid="text-dashboard-heading">A little learning,<br className="sm:hidden"/> a lot of possibility.</h1>
         <p className="mt-2 max-w-[540px] text-[14px] leading-relaxed text-[#777286]">Welcome back, {progress.learnerName || 'learner'}. Follow a spark of curiosity wherever it takes you.</p>
       </div>
-      <Link href={`/modules/${continueModule.id}`} className="group inline-flex min-h-[54px] items-center justify-between gap-5 rounded-2xl bg-[#d8c8f2] px-5 py-3 text-left text-[#352c4d] shadow-[0_5px_14px_rgba(91,67,128,.08)] hover:-translate-y-0.5 sm:min-w-[250px]" data-testid="button-continue-learning">
+      <Link href={appHref(routeBase, `/modules/${continueModule.id}`)} className="group inline-flex min-h-[54px] items-center justify-between gap-5 rounded-2xl bg-[#d8c8f2] px-5 py-3 text-left text-[#352c4d] shadow-[0_5px_14px_rgba(91,67,128,.08)] hover:-translate-y-0.5 sm:min-w-[250px]" data-testid="button-continue-learning">
         <span><span className="block text-[10px] font-bold uppercase tracking-[.12em] text-[#75638f]">{progress.completedModuleIds.length ? 'Pick up where you left off' : 'A good place to begin'}</span><span className="mt-0.5 block text-[14px] font-extrabold">{continueModule.title}</span></span><span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/70 group-hover:bg-white"><ArrowRight size={17}/></span>
       </Link>
     </div>
@@ -148,7 +183,7 @@ function Dashboard() {
       <section className="flex flex-col justify-between rounded-[24px] border border-[#ebe8ef] bg-white p-6" data-testid="panel-daily-prompt">
         <div className="flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-[.14em] text-[#8b8498]">A gentle reminder</span><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#fbf1da] text-[#a7833e]"><Target size={17}/></div></div>
         <div className="mt-5"><p className="font-display text-[19px] font-bold leading-snug tracking-[-.035em] text-[#383249]">“You don’t have to know it all. Just start with one thing.”</p><p className="mt-3 text-[11px] text-[#8a8497]">There are {modules.length} bite-sized modules waiting.</p></div>
-        <Link href="/achievements" className="mt-5 inline-flex w-fit items-center gap-2 text-[12px] font-bold text-[#8061ad] hover:gap-3" data-testid="link-view-achievements">See your progress <ArrowRight size={14}/></Link>
+        <Link href={appHref(routeBase, '/achievements')} className="mt-5 inline-flex w-fit items-center gap-2 text-[12px] font-bold text-[#8061ad] hover:gap-3" data-testid="link-view-achievements">See your progress <ArrowRight size={14}/></Link>
       </section>
     </div>
     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -163,11 +198,11 @@ function Dashboard() {
 }
 
 function SubjectCard({ subject, index }: { subject: Subject; index: number }) {
-  const { progress } = useStudy();
+  const { progress, routeBase } = useStudy();
   const items = modules.filter((module) => module.subjectId === subject.id);
   const done = items.filter((module) => progress.completedModuleIds.includes(module.id)).length;
   const Icon = subject.icon;
-  return <Link href={`/subjects/${subject.id}`} className="group rounded-[20px] border border-[#ebe8ef] bg-white p-5 hover:-translate-y-1 hover:border-[#d8cce9] hover:shadow-[0_12px_28px_rgba(65,50,91,.07)]" data-testid={`card-subject-${subject.id}`}>
+  return <Link href={appHref(routeBase, `/subjects/${subject.id}`)} className="group rounded-[20px] border border-[#ebe8ef] bg-white p-5 hover:-translate-y-1 hover:border-[#d8cce9] hover:shadow-[0_12px_28px_rgba(65,50,91,.07)]" data-testid={`card-subject-${subject.id}`}>
     <div className="mb-5 flex items-start justify-between"><div className={cx('flex h-11 w-11 items-center justify-center rounded-[15px]', `tint-${subject.tint}`)}><Icon size={20} strokeWidth={1.8}/></div><span className="rounded-full bg-[#f5f3f7] px-2.5 py-1 text-[10px] font-bold text-[#777184]">{items.length} modules</span></div>
     <h3 className="font-display text-[16px] font-extrabold tracking-[-.025em] text-[#342f44]">{subject.name}</h3><p className="mt-1 text-[11px] leading-relaxed text-[#888295]">{subject.description}</p>
     <div className="mt-5 flex items-center gap-3"><div className="flex-1"><ProgressBar value={items.length ? done / items.length * 100 : 0} testId={`progress-subject-${subject.id}`}/></div><span className="text-[10px] font-bold text-[#8a8497]">{done}/{items.length}</span><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#f4f1f8] text-[#837293] group-hover:bg-[#e8ddf5]"><ArrowRight size={14}/></span></div>
@@ -177,12 +212,12 @@ function SubjectCard({ subject, index }: { subject: Subject; index: number }) {
 function SubjectPage() {
   const { subjectId = '' } = useParams();
   const subject = subjectFor(subjectId);
-  const { progress } = useStudy();
+  const { progress, routeBase } = useStudy();
   if (!subject) return <NotFound />;
   const Icon = subject.icon;
   const items = modules.filter((module) => module.subjectId === subjectId);
   return <div className="page-in">
-    <Link href="/" className="mb-6 inline-flex items-center gap-2 text-[12px] font-bold text-[#7b7489] hover:text-[#5a4479]" data-testid="link-back-dashboard"><ArrowLeft size={15}/>All subjects</Link>
+    <Link href={appHref(routeBase)} className="mb-6 inline-flex items-center gap-2 text-[12px] font-bold text-[#7b7489] hover:text-[#5a4479]" data-testid="link-back-dashboard"><ArrowLeft size={15}/>All subjects</Link>
     <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
       <div><div className={cx('mb-4 flex h-12 w-12 items-center justify-center rounded-[16px]',`tint-${subject.tint}`)}><Icon size={22}/></div><div className="mb-1 text-[11px] font-bold uppercase tracking-[.15em] text-[#918a9d]">Subject pathway</div><h1 className="font-display text-[34px] font-extrabold tracking-[-.05em]">{subject.name}</h1><p className="mt-1 text-sm text-[#817b8e]">{subject.description}</p></div>
       <div className="rounded-2xl border border-[#ebe8ef] bg-white px-4 py-3 text-[11px] text-[#716b7e]" data-testid="status-subject-stage"><GraduationCap size={15} className="mr-2 inline text-[#9779c1]"/>Content view: <b>{levelFor(progress.educationLevelId).label}</b></div>
@@ -193,10 +228,10 @@ function SubjectPage() {
 }
 
 function ModuleRow({ module, index }: { module: Module; index: number }) {
-  const { progress } = useStudy();
+  const { progress, routeBase } = useStudy();
   const done = progress.completedModuleIds.includes(module.id);
   const score = progress.quizBestScores[module.id];
-  return <Link href={`/modules/${module.id}`} className="group flex flex-col gap-4 rounded-[20px] border border-[#ebe8ef] bg-white p-5 hover:border-[#d8cce9] hover:shadow-[0_10px_25px_rgba(65,50,91,.06)] sm:flex-row sm:items-center" data-testid={`card-module-${module.id}`}>
+  return <Link href={appHref(routeBase, `/modules/${module.id}`)} className="group flex flex-col gap-4 rounded-[20px] border border-[#ebe8ef] bg-white p-5 hover:border-[#d8cce9] hover:shadow-[0_10px_25px_rgba(65,50,91,.06)] sm:flex-row sm:items-center" data-testid={`card-module-${module.id}`}>
     <div className="flex w-full items-center gap-4 sm:w-auto"><span className="font-display text-[12px] font-extrabold text-[#c0b8ca]">0{index + 1}</span><div className={cx('flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px]', done ? 'bg-[#e3f2e8] text-[#4c9270]' : 'bg-[#f2eef8] text-[#9075b4]')}>{done ? <Check size={19}/> : <BookOpenCheck size={19}/>}</div><div className="min-w-0 flex-1 sm:min-w-[210px]"><h3 className="font-display text-[14px] font-extrabold tracking-[-.02em]">{module.title}</h3><p className="mt-1 text-[11px] leading-relaxed text-[#858092]">{module.summary}</p></div><ArrowRight size={17} className="ml-auto shrink-0 text-[#a79eaf] group-hover:translate-x-1 group-hover:text-[#8061ad] sm:hidden"/></div>
     <div className="ml-[52px] flex flex-wrap items-center gap-x-5 gap-y-2 sm:ml-auto sm:justify-end"><span className="inline-flex items-center gap-1.5 text-[10px] text-[#858092]"><Clock3 size={13}/>{module.estimatedMinutes} min</span><span className={cx('rounded-full px-2.5 py-1 text-[10px] font-bold', done ? 'bg-[#e5f3e9] text-[#53866a]' : 'bg-[#f4f2f6] text-[#817b8e]')}>{done ? 'Lesson complete' : 'Ready to explore'}</span>{score !== undefined && <span className="text-[10px] font-bold text-[#8d70b5]">Best quiz {score}/3</span>}<ArrowRight size={16} className="hidden text-[#a79eaf] group-hover:translate-x-1 group-hover:text-[#8061ad] sm:block"/></div>
   </Link>;
@@ -205,7 +240,7 @@ function ModuleRow({ module, index }: { module: Module; index: number }) {
 function ModulePage() {
   const { moduleId = '' } = useParams();
   const module = moduleFor(moduleId);
-  const { progress, update } = useStudy();
+  const { progress, update, routeBase } = useStudy();
   const [tab, setTab] = useState<'lesson'|'quiz'>('lesson');
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
@@ -233,7 +268,7 @@ function ModulePage() {
   const startQuiz = () => { setAnswers({}); setSubmitted(false); setTab('quiz'); };
   return <div className="page-in mx-auto max-w-[880px]">
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <Link href={`/subjects/${subject.id}`} className="inline-flex items-center gap-2 text-[12px] font-bold text-[#7b7489] hover:text-[#5a4479]" data-testid="link-back-subject"><ArrowLeft size={15}/>{subject.name}</Link>
+      <Link href={appHref(routeBase, `/subjects/${subject.id}`)} className="inline-flex items-center gap-2 text-[12px] font-bold text-[#7b7489] hover:text-[#5a4479]" data-testid="link-back-subject"><ArrowLeft size={15}/>{subject.name}</Link>
       <span className="inline-flex items-center gap-1.5 rounded-full bg-[#eee8f7] px-3 py-1.5 text-[10px] font-bold text-[#715a93]" data-testid="badge-module-stage"><GraduationCap size={13}/>{level.label}</span>
     </div>
     <div className="mb-6"><div className="mb-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#958ea1]">{subject.name} <span className="px-1.5">/</span> {module.estimatedMinutes} minute module</div><h1 className="font-display text-[32px] font-extrabold leading-tight tracking-[-.05em] sm:text-[40px]" data-testid="text-module-title">{module.title}</h1><p className="mt-2 max-w-[650px] text-[13px] leading-relaxed text-[#7e788b]">{module.summary}</p></div>
@@ -302,13 +337,13 @@ function AchievementsPage() {
 }
 
 function SettingsPage() {
-  const { progress, update, reset } = useStudy();
+  const { progress, update, reset, mode } = useStudy();
   const [name, setName] = useState(progress.learnerName);
   const [showReset, setShowReset] = useState(false);
   useEffect(()=>setName(progress.learnerName),[progress.learnerName]);
   const selected=levelFor(progress.educationLevelId);
   const saveName=()=>update({learnerName:name.trim()||'Learner'});
-  const resetAll=()=>{reset();setName(initialProgress.learnerName);setShowReset(false);};
+  const resetAll=()=>{reset();setShowReset(false);};
   return <div className="page-in mx-auto max-w-[850px]">
     <div className="mb-7"><div className="mb-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#8c8499]">Make it yours</div><h1 className="font-display text-[34px] font-extrabold tracking-[-.05em]" data-testid="text-settings-heading">Your learning space.</h1><p className="mt-2 text-[13px] text-[#817b8e]">A few details help make StudyMe feel like yours.</p></div>
     <section className="mb-4 rounded-[22px] border border-[#ebe8ef] bg-white p-5 sm:p-7" data-testid="panel-profile-settings">
@@ -321,19 +356,202 @@ function SettingsPage() {
       <div className="grid gap-2 sm:grid-cols-2">{educationLevels.map((level)=>{const active=progress.educationLevelId===level.id;return <button key={level.id} onClick={()=>update({educationLevelId:level.id})} data-testid={`button-level-${level.id}`} aria-pressed={active} className={cx('flex items-start gap-3 rounded-[15px] border p-3.5 text-left',active?'border-[#b49bd2] bg-[#f7f2fb]':'border-[#efedf1] bg-white hover:border-[#d6c9e6] hover:bg-[#fcfafe]')}><span className={cx('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',active?'border-[#9876bf] bg-[#9876bf] text-white':'border-[#d7d2dd] text-transparent')}>{active?<Check size={12}/>:<span className="h-2 w-2 rounded-full bg-transparent"/>}</span><span><span className="block text-[12px] font-bold text-[#4d465b]">{level.label}</span><span className="mt-0.5 block text-[10px] font-semibold text-[#9a92a2]">{level.ageRange}</span><span className="mt-1 block text-[10px] leading-relaxed text-[#817b8e]">{level.description}</span></span></button>;})}</div>
     </section>
     <section className="rounded-[22px] border border-[#ebe8ef] bg-white p-5 sm:p-7" data-testid="panel-data-settings">
-      <div className="mb-2 font-display text-[15px] font-extrabold">Your demo data</div><p className="max-w-[560px] text-[11px] leading-relaxed text-[#817b8e]">Your learner name, chosen stage, progress, quiz scores, and local tokens are saved in this browser only. Nothing is sent to a server.</p>
+      <div className="mb-2 font-display text-[15px] font-extrabold">{mode === 'demo' ? 'Your demo data' : 'Your learning data on this device'}</div><p className="max-w-[560px] text-[11px] leading-relaxed text-[#817b8e]">{mode === 'demo' ? 'Your learner name, chosen stage, progress, quiz scores, and local tokens are saved in this browser only. Nothing is sent to a server.' : 'Your sign-in is managed securely. Lesson progress, quiz scores, and local tokens are stored in this browser and do not sync across devices yet.'}</p>
       <div className="mt-5 flex flex-col justify-between gap-4 rounded-xl bg-[#f8f6f8] p-4 sm:flex-row sm:items-center"><div><div className="text-[11px] font-bold text-[#625b70]">Start fresh</div><div className="mt-1 text-[10px] text-[#938d9a]">Clear your progress, scores, and tokens on this device.</div></div><button onClick={()=>setShowReset(true)} data-testid="button-reset-progress" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#e4d4d2] px-4 text-[11px] font-bold text-[#a05d57] hover:bg-[#fff4f2]"><RotateCcw size={14}/>Reset all progress</button></div>
     </section>
     {showReset&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-[#28233a]/45 p-4" role="dialog" aria-modal="true" aria-labelledby="reset-dialog-title" data-testid="dialog-reset-confirm"><div className="w-full max-w-[410px] rounded-[22px] bg-white p-6 shadow-xl"><div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fbefed] text-[#a35d56]"><RotateCcw size={19}/></div><h2 id="reset-dialog-title" className="font-display text-[20px] font-extrabold tracking-[-.03em]">Clear your learning data?</h2><p className="mt-2 text-[12px] leading-relaxed text-[#817b8e]">This removes your name, selected stage, completed lessons, quiz scores, and token collection from this browser. You can’t undo this.</p><div className="mt-6 flex justify-end gap-2"><button onClick={()=>setShowReset(false)} data-testid="button-cancel-reset" className="rounded-xl border border-[#e8e3ed] px-4 py-2.5 text-[11px] font-bold text-[#716a7d]">Keep my progress</button><button onClick={resetAll} data-testid="button-confirm-reset" className="rounded-xl bg-[#a75e57] px-4 py-2.5 text-[11px] font-bold text-white hover:bg-[#914c46]">Yes, reset</button></div></div></div>}
   </div>;
 }
 
-function Router() {
-  return <Provider><AppShell /></Provider>;
+function SplashLanding() {
+  return <main className="landing-shell min-h-[100dvh] p-3 sm:p-6">
+    <div className="landing-frame mx-auto grid min-h-[calc(100dvh-24px)] max-w-[1360px] overflow-hidden rounded-[28px] sm:min-h-[calc(100dvh-48px)] lg:grid-cols-[1.12fr_.88fr]">
+      <section className="landing-story relative isolate flex min-h-[560px] flex-col overflow-hidden p-6 text-white sm:p-10 lg:min-h-0 lg:p-12 xl:p-14" data-testid="splash-art">
+        <div className="story-orbit story-orbit-one" /><div className="story-orbit story-orbit-two" />
+        <div className="relative z-10 flex items-center gap-3">
+          <img src={`${basePath}/logo.svg`} alt="StudyMe" className="h-[50px] w-auto" />
+        </div>
+        <div className="relative z-10 my-auto max-w-[610px] py-12 lg:py-8">
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[.07] px-3.5 py-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#e8dcf6]"><Sparkles size={13} className="text-[#f3cb73]" /> A learning space for every stage</div>
+          <h1 className="font-display text-[44px] font-extrabold leading-[1.01] tracking-[-.065em] sm:text-[60px] xl:text-[68px]">A little learning.<br /><span className="text-[#d8c2f3]">A lot of possibility.</span></h1>
+          <p className="mt-5 max-w-[440px] text-[14px] leading-relaxed text-[#d2ccdf] sm:text-[15px]">Follow your curiosity through bite-sized lessons, quick quizzes, and milestones worth celebrating.</p>
+          <div className="mt-9 grid max-w-[485px] grid-cols-3 gap-2.5 sm:gap-3">
+            <div className="feature-tile"><BookOpenCheck size={19} className="text-[#f3cb73]" /><span className="mt-4 block text-[10px] font-bold text-white sm:text-[11px]">Real modules</span><span className="mt-1 block text-[9px] leading-relaxed text-[#c8c0d5] sm:text-[10px]">Learn one idea at a time</span></div>
+            <div className="feature-tile"><CircleHelp size={19} className="text-[#d7b8ff]" /><span className="mt-4 block text-[10px] font-bold text-white sm:text-[11px]">Quick quizzes</span><span className="mt-1 block text-[9px] leading-relaxed text-[#c8c0d5] sm:text-[10px]">Check what you know</span></div>
+            <div className="feature-tile"><Award size={19} className="text-[#f3cb73]" /><span className="mt-4 block text-[10px] font-bold text-white sm:text-[11px]">Earn tokens</span><span className="mt-1 block text-[9px] leading-relaxed text-[#c8c0d5] sm:text-[10px]">Celebrate each step</span></div>
+          </div>
+        </div>
+        <div className="relative z-10 flex items-center justify-between gap-4 text-[10px] text-[#bcb4cd]"><span>Early years to lifelong learning</span><span className="hidden sm:inline">Choose your pace. Keep your progress.</span></div>
+      </section>
+      <section className="landing-entry flex flex-col justify-center px-6 py-10 sm:px-10 lg:px-12 xl:px-[4.5rem]">
+        <div className="mb-8 flex items-center gap-3 lg:hidden"><img src={`${basePath}/logo.svg`} alt="StudyMe" className="h-10 w-auto" /></div>
+        <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#947da9]">Welcome to StudyMe</p>
+        <h2 className="mt-3 font-display text-[29px] font-extrabold leading-tight tracking-[-.05em] text-[#302a47] sm:text-[36px]">Where would you<br className="hidden sm:block" /> like to begin?</h2>
+        <p className="mt-3 max-w-[380px] text-[13px] leading-relaxed text-[#817b8e]">A safe place to learn at your own pace. Sign in, make an account, or look around first.</p>
+        <div className="mt-8 grid gap-3">
+          <Link href="/sign-in" className="entry-primary flex min-h-[52px] items-center justify-between rounded-xl px-5 py-3 text-[13px] font-bold text-white" data-testid="button-splash-signin"><span>Sign in to StudyMe</span><ArrowRight size={16} /></Link>
+          <Link href="/sign-up" className="entry-secondary flex min-h-[52px] items-center justify-center rounded-xl px-5 py-3 text-[13px] font-bold" data-testid="button-splash-signup">Create a free account</Link>
+        </div>
+        <div className="my-6 flex items-center gap-3 text-[10px] text-[#a19aaa]"><span className="h-px flex-1 bg-[#eeeaf2]" /><span>just exploring?</span><span className="h-px flex-1 bg-[#eeeaf2]" /></div>
+        <Link href="/demo" className="entry-demo flex min-h-[52px] items-center justify-between rounded-xl px-5 py-3 text-[12px] font-bold" data-testid="button-splash-demo"><span><span className="block text-left">Try the guest demo</span><span className="mt-0.5 block text-[10px] font-medium text-[#8e7ba2]">No account needed · progress stays on this device</span></span><ArrowRight size={15} /></Link>
+        <div className="mt-7 flex items-start gap-2 border-t border-[#f0ecf3] pt-5 text-[10px] leading-relaxed text-[#938c9c]"><CheckCircle2 size={14} className="mt-0.5 shrink-0 text-[#7d9d83]" /><p>Your account is protected with secure sign-in. Guest demo progress is kept separate.</p></div>
+      </section>
+    </div>
+  </main>;
+}
+
+function SignInPage() {
+  return <AuthFrame mode="sign-in"><SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} /></AuthFrame>;
+}
+
+function SignUpPage() {
+  return <AuthFrame mode="sign-up"><SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} /></AuthFrame>;
+}
+
+function AuthFrame({ mode, children }: { mode: 'sign-in' | 'sign-up'; children: ReactNode }) {
+  const signingIn = mode === 'sign-in';
+  return <main className="auth-shell min-h-[100dvh] px-3 py-4 sm:px-6 sm:py-6">
+    <div className="auth-frame mx-auto grid min-h-[calc(100dvh-32px)] max-w-[1200px] overflow-hidden rounded-[26px] lg:min-h-[calc(100dvh-48px)] lg:grid-cols-[.86fr_1.14fr]">
+      <section className="auth-story relative hidden flex-col justify-between overflow-hidden p-9 text-white lg:flex xl:p-12">
+        <div className="story-orbit story-orbit-one" /><div className="story-orbit story-orbit-two" />
+        <Link href="/" className="relative z-10 inline-flex w-fit items-center"><img src={`${basePath}/logo.svg`} alt="StudyMe home" className="h-[48px] w-auto" /></Link>
+        <div className="relative z-10">
+          <span className="mb-4 block text-[10px] font-bold uppercase tracking-[.2em] text-[#ddc9f6]">{signingIn ? 'Your learning space' : 'A good place to begin'}</span>
+          <h1 className="font-display max-w-[430px] text-[39px] font-extrabold leading-[1.08] tracking-[-.055em]">{signingIn ? 'Good to have you back.' : 'Make room for more wonder.'}</h1>
+          <p className="mt-4 max-w-[390px] text-[13px] leading-relaxed text-[#d2ccdf]">{signingIn ? 'Pick up where curiosity left off. Your learning progress is waiting.' : 'Create your own learning space and celebrate every small step forward.'}</p>
+          <div className="auth-art-card mt-9 flex h-[188px] items-center justify-center overflow-hidden rounded-[25px] border border-white/15">
+            <img src={`${basePath}/studyme-logo.png`} alt="StudyMe feather and star artwork" className="h-[168px] w-[168px] rounded-[22px] object-cover" />
+          </div>
+        </div>
+        <p className="relative z-10 text-[10px] text-[#c2b8d1]">A little learning. A lot of possibility.</p>
+      </section>
+      <section className="auth-form-side flex flex-col items-center justify-center px-2 py-7 sm:px-7 lg:px-10 xl:px-14">
+        <div className="mb-6 flex w-full max-w-[440px] items-center justify-between">
+          <Link href="/" className="inline-flex items-center gap-2 text-[11px] font-bold text-[#766b87] hover:text-[#57446f]" data-testid="link-auth-home"><ArrowLeft size={14} /> Back to StudyMe</Link>
+          <Link href="/demo" className="inline-flex items-center gap-1.5 rounded-full border border-[#e7e1ee] bg-white/80 px-3 py-2 text-[10px] font-bold text-[#735d8c] hover:bg-white" data-testid="link-auth-demo">Guest demo <ArrowRight size={12} /></Link>
+        </div>
+        <div className="mb-5 w-full max-w-[440px] lg:hidden"><img src={`${basePath}/logo.svg`} alt="StudyMe" className="h-[42px] w-auto" /></div>
+        <div className="auth-clerk-wrap w-full">{children}</div>
+        <p className="mt-5 max-w-[420px] text-center text-[10px] leading-relaxed text-[#9690a0]">Your sign-in is secure. Learning progress for this space is saved in this browser.</p>
+      </section>
+    </div>
+  </main>;
+}
+
+function HomeRedirect() {
+  return <>
+    <Show when="signed-in"><Redirect to="/user-portal" /></Show>
+    <Show when="signed-out"><SplashLanding /></Show>
+  </>;
+}
+
+function AuthenticatedPortal() {
+  const { isLoaded, isSignedIn, user } = useUser();
+  if (!isLoaded) return <div className="flex min-h-[100dvh] items-center justify-center bg-[#f6f5f9] text-sm text-[#776c88]" aria-live="polite">Opening your learning space…</div>;
+  if (!isSignedIn || !user) return <Redirect to="/" />;
+  const name = user.fullName || user.firstName || user.username || 'Learner';
+  return <StudyExperience key={user.id} routeBase="/user-portal" storageKey={`studyme-progress-v1:account:${user.id}`} mode="account" initialName={name} />;
+}
+
+function StudyExperience({ routeBase, storageKey, mode, initialName }: {
+  routeBase: string;
+  storageKey: string;
+  mode: StudyMode;
+  initialName: string;
+}) {
+  return <Provider key={storageKey} storageKey={storageKey} routeBase={routeBase} mode={mode} initialName={initialName}><AppShell /></Provider>;
+}
+
+function DemoPortal() {
+  return <StudyExperience routeBase="/demo" storageKey="studyme-progress-v1:demo" mode="demo" initialName="Guest learner" />;
+}
+
+function LogoutButton() {
+  const { signOut } = useClerk();
+  return <button type="button" onClick={() => void signOut({ redirectUrl: basePath || '/' })} className="rounded-full border border-[#e5dfec] bg-white px-3 py-2 text-[11px] font-bold text-[#695a7e] hover:bg-[#f5f0fa]">Log out</button>;
+}
+
+function stripBase(path: string) {
+  return basePath && path.startsWith(basePath) ? path.slice(basePath.length) || '/' : path;
+}
+
+const clerkAppearance = {
+  theme: shadcn,
+  cssLayerName: 'clerk',
+  options: {
+    logoPlacement: 'inside' as const,
+    logoLinkUrl: basePath || '/',
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+  },
+  variables: {
+    colorPrimary: '#8060ae',
+    colorForeground: '#302a47',
+    colorMutedForeground: '#817b8e',
+    colorDanger: '#a75e57',
+    colorBackground: '#ffffff',
+    colorInput: '#fcfbfd',
+    colorInputForeground: '#302a47',
+    colorNeutral: '#302a47',
+    fontFamily: "'Avenir Next', 'Trebuchet MS', sans-serif",
+    borderRadius: '0.85rem',
+  },
+  elements: {
+    rootBox: 'w-full flex justify-center',
+    cardBox: 'bg-white rounded-2xl w-[440px] max-w-full overflow-hidden border border-[#ebe8ef] shadow-[0_18px_45px_rgba(47,39,66,.12)]',
+    card: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    footer: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    headerTitle: 'text-[#302a47] font-bold',
+    headerSubtitle: 'text-[#817b8e]',
+    socialButtonsBlockButtonText: 'text-[#302a47] font-semibold',
+    formFieldLabel: 'text-[#514963] font-semibold',
+    footerActionLink: 'text-[#735594] font-semibold',
+    footerActionText: 'text-[#817b8e]',
+    dividerText: 'text-[#817b8e]',
+    identityPreviewEditButton: 'text-[#735594]',
+    formFieldSuccessText: 'text-[#45816b]',
+    alertText: 'text-[#a5534b]',
+    logoBox: 'flex justify-center',
+    logoImage: 'object-contain',
+    socialButtonsBlockButton: 'rounded-xl border border-[#e6e1ed] bg-white hover:bg-[#f8f5fb]',
+    formButtonPrimary: 'rounded-xl bg-[#8060ae] text-white hover:bg-[#6f509b]',
+    formFieldInput: 'rounded-xl border-[#e3deea] bg-white text-[#332b44]',
+    footerAction: 'border-0',
+    dividerLine: 'bg-[#ebe8ef]',
+    alert: 'rounded-xl bg-[#fcf0ee]',
+    otpCodeFieldInput: 'rounded-xl border-[#e3deea]',
+    formFieldRow: 'gap-2',
+    main: 'gap-4',
+  },
+};
+
+function ClerkProviderWithRoutes() {
+  const [, setLocation] = useLocation();
+  return <ClerkProvider
+    publishableKey={clerkPubKey}
+    proxyUrl={clerkProxyUrl}
+    appearance={clerkAppearance}
+    signInUrl={`${basePath}/sign-in`}
+    signUpUrl={`${basePath}/sign-up`}
+    localization={{
+      signIn: { start: { title: 'Welcome back', subtitle: 'Sign in to access your learning space' } },
+      signUp: { start: { title: 'Create your account', subtitle: 'Start learning at your own pace' } },
+    }}
+    routerPush={(to) => setLocation(stripBase(to))}
+    routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
+  >
+    <Switch>
+      <Route path="/" component={HomeRedirect} />
+      <Route path="/sign-in/*?" component={SignInPage} />
+      <Route path="/sign-up/*?" component={SignUpPage} />
+      <Route path="/demo/*?" component={DemoPortal} />
+      <Route path="/user-portal/*?" component={AuthenticatedPortal} />
+      <Route component={NotFound} />
+    </Switch>
+  </ClerkProvider>;
 }
 
 function App() {
-  return <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter>;
+  return <WouterRouter base={basePath}><ClerkProviderWithRoutes /></WouterRouter>;
 }
 
 export default App;

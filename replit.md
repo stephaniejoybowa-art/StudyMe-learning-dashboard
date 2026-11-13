@@ -7,22 +7,28 @@ A browser-first study dashboard where learners work through subject lessons and 
 - `pnpm --filter @workspace/studyme run dev` — run the StudyMe preview
 - `pnpm --filter @workspace/studyme run typecheck` — check the StudyMe TypeScript
 - `pnpm --filter @workspace/studyme run build` — build the StudyMe frontend
+- `pnpm --filter @workspace/api-server run typecheck` — check the auth proxy server
 
 ## Stack
 
 - pnpm workspaces, React, TypeScript, Vite
+- Replit-managed Clerk handles account sign-in and sign-up
 - Learner progress and achievement tokens are saved in browser localStorage
-- No account, database, AI API key, or wallet is needed for the demo
+- The guest demo needs no account, database, AI API key, or wallet
 
 ## Where things live
 
 - `artifacts/studyme/` — StudyMe app and downloadable source package
 - `artifacts/studyme/src/` — app pages, learning flows, curriculum, and styles
 - `artifacts/studyme/public/studyme-logo.png` — supplied StudyMe mark
+- `artifacts/studyme/public/logo.svg` — branded logo used on Clerk screens
+- `artifacts/api-server/src/middlewares/clerkProxyMiddleware.ts` — Clerk's production frontend-API proxy
 
 ## Architecture decisions
 
-- Open directly into demo mode so the learning flow does not depend on missing authentication routes.
+- Open to a public StudyMe splash with sign-in, sign-up, and guest-demo options.
+- Use Replit-managed Clerk for secure account access; keep auth keys in workspace secrets, never in source or ZIP files.
+- Keep guest progress separate from each signed-in account's browser-local progress.
 - Keep curriculum and quizzes bundled so the demo works without an AI service or API key.
 - Save progress locally per browser; switching education stages does not reset it.
 - Call rewards achievement tokens in the app; do not imply they are on-chain NFTs.

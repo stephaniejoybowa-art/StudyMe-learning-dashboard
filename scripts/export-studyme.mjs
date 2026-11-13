@@ -45,9 +45,11 @@ writeFileSync(
         preview: "vite preview --host 0.0.0.0",
       },
       dependencies: {
+        "@clerk/react": "^6.18.6",
+        "@clerk/themes": "^2.4.57",
         "lucide-react": "^0.545.0",
-        react: "^19.1.0",
-        "react-dom": "^19.1.0",
+        react: "19.1.4",
+        "react-dom": "19.1.4",
         wouter: "^3.13.0",
       },
       devDependencies: {
@@ -75,7 +77,7 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss({ optimize: false })],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -121,7 +123,7 @@ writeFileSync(
   path.join(appRoot, "README.md"),
   `# StudyMe
 
-A local-first learning dashboard for early-years, school, university, vocational, and lifelong learners.
+A learning app for early-years, school, university, vocational, and lifelong learners. The opening screen offers secure sign-in, account creation, and a guest demo.
 
 ## Run it
 
@@ -129,17 +131,25 @@ Requirements: Node.js 20.19+ or 22.12+.
 
 \`\`\`sh
 npm install
+cp .env.example .env.local
 npm run dev
 \`\`\`
 
-Open the local Vite address shown in the terminal. The demo opens directly; no account, API key, or wallet is needed.
+Set \`VITE_CLERK_PUBLISHABLE_KEY\` in \`.env.local\` before opening the app. The Replit workspace provisions Clerk keys automatically; private keys are not included in this ZIP. For production, run the API server with the Clerk proxy and keep its \`CLERK_SECRET_KEY\` in server-side environment secrets.
+
+Open the local Vite address shown in the terminal. Choose **Explore the demo** to enter without an account.
 
 ## Learning and rewards
 
-Study a lesson to earn its module token, then pass its three-question quiz to earn a separate quiz token. Education-stage choices, lesson progress, scores, and tokens save in this browser.
+Study a lesson to earn its module token, then pass its three-question quiz to earn a separate quiz token. Education-stage choices, lesson progress, scores, and tokens save in this browser. Demo progress and signed-in account progress are kept separate on this device; they do not sync across devices yet.
 
 These rewards are local achievement tokens, not NFTs minted on NEAR. On-chain rewards require a wallet connection and a deployed compatible NFT contract.
 `,
+);
+
+writeFileSync(
+  path.join(appRoot, ".env.example"),
+  "VITE_CLERK_PUBLISHABLE_KEY=\\nVITE_CLERK_PROXY_URL=\\n",
 );
 
 execFileSync("zip", ["-q", "-r", archivePath, "studyme-code"], {
