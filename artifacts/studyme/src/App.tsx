@@ -1,21 +1,23 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { ClerkProvider, Show, SignIn, SignUp, useClerk, useUser } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import { ErrorBoundary } from '@/components/error-boundary';
 import NotFound from '@/pages/not-found';
 import {
-  ArrowLeft, ArrowRight, Award, BookOpenCheck, Check, CheckCircle2,
-  CircleHelp, Clock3, Compass, GraduationCap, Layers3, Menu, RotateCcw, Settings,
-  Sparkles, Target, Trophy, X,
+  ArrowLeft, ArrowRight, Award, BookOpenCheck, Check, CheckCircle2, CircleHelp,
+  Clock3, Compass, Download, FileText, FileUp, FolderOpen, GraduationCap,
+  Layers3, Menu, Pencil, RotateCcw, Save, Settings, Sparkles, Target, Trash2,
+  Trophy, X,
 } from 'lucide-react';
 import { Link, Redirect, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 import { educationLevels, modules, subjects, type EducationLevel, type Module, type Question, type Subject } from '@/data/curriculum';
+import { deleteStudyWork, listStudyWork, saveStudyWork, type FileWorkEntry, type NoteWorkEntry, type StudyWorkEntry } from '@/lib/work-storage';
 
 type AchievementToken = { id: string; moduleId: string; subjectId: string; title: string; kind: 'module' | 'quiz'; points: number; earnedAt: string };
 type Progress = { learnerName: string; educationLevelId: string; completedModuleIds: string[]; quizBestScores: Record<string, number>; earnedTokens: AchievementToken[] };
 type StudyMode = 'demo' | 'account';
-type StudyContextValue = { progress: Progress; update: (patch: Partial<Progress>) => void; reset: () => void; routeBase: string; mode: StudyMode };
+type StudyContextValue = { progress: Progress; update: (patch: Partial<Progress>) => void; reset: () => void; routeBase: string; mode: StudyMode; workScope: string };
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
 const clerkPubKey = publishableKeyFromHost(window.location.hostname, import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
@@ -56,7 +58,7 @@ function Provider({ children, storageKey, routeBase, mode, initialName }: {
     setProgress(initialProgress(initialName));
     try { localStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
   };
-  return <StudyContext.Provider value={{ progress, update, reset, routeBase, mode }}>{children}</StudyContext.Provider>;
+  return <StudyContext.Provider value={{ progress, update, reset, routeBase, mode, workScope: storageKey }}>{children}</StudyContext.Provider>;
 }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
@@ -83,6 +85,7 @@ function AppShell() {
   const level = levelFor(progress.educationLevelId);
   const nav = [
     { href: appHref(routeBase), label: 'My learning', icon: Compass },
+    { href: appHref(routeBase, '/work'), label: 'My Work', icon: FolderOpen },
     { href: appHref(routeBase, '/achievements'), label: 'Achievements', icon: Trophy },
     { href: appHref(routeBase, '/settings'), label: 'Settings', icon: Settings },
   ];
@@ -137,6 +140,7 @@ function AppShell() {
             <Route path={appHref(routeBase)} component={Dashboard} />
             <Route path={appHref(routeBase, '/subjects/:subjectId')} component={SubjectPage} />
             <Route path={appHref(routeBase, '/modules/:moduleId')} component={ModulePage} />
+            <Route path={appHref(routeBase, '/work')} component={MyWorkPage} />
             <Route path={appHref(routeBase, '/achievements')} component={AchievementsPage} />
             <Route path={appHref(routeBase, '/settings')} component={SettingsPage} />
             <Route component={NotFound} />
@@ -176,7 +180,7 @@ function Dashboard() {
           <div className="float-gently hidden h-[84px] w-[84px] shrink-0 items-center justify-center rounded-[28px] bg-[#f1d17c] text-[#453b53] sm:flex"><BookOpenCheck size={34}/></div>
         </div>
         <div className="relative mt-7 flex items-end justify-between gap-5">
-          <div className="w-full max-w-[370px]"><div className="mb-2 flex items-center justify-between text-[11px]"><span className="text-[#d3cde0]">Your module journey</span><span className="font-bold text-white">{progress.completedModuleIds.length} / {modules.length}</span></div><ProgressBar value={completion} testId="progress-overall" /><div className="mt-2 text-[10px] text-[#b8b0c8]">{completion}% of this demo library explored</div></div>
+          <div className="w-full max-w-[370px]"><div className="mb-2 flex items-center justify-between text-[11px]"><span className="text-[#d3cde0]">Your module journey</span><span className="font-bold text-white">{progress.completedModuleIds.length} / {modules.length}</span></div><ProgressBar value={completion} testId="progress-overall" /><div className="mt-2 text-[10px] text-[#b8b0c8]">{completion}% of your StudyMe library explored</div></div>
           <div className="hidden text-right sm:block"><div className="font-display text-[27px] font-extrabold">{progress.earnedTokens.length}</div><div className="text-[10px] text-[#c9c3d5]">tokens collected</div></div>
         </div>
       </section>
@@ -186,6 +190,10 @@ function Dashboard() {
         <Link href={appHref(routeBase, '/achievements')} className="mt-5 inline-flex w-fit items-center gap-2 text-[12px] font-bold text-[#8061ad] hover:gap-3" data-testid="link-view-achievements">See your progress <ArrowRight size={14}/></Link>
       </section>
     </div>
+    <Link href={appHref(routeBase, '/work')} className="group mb-8 flex flex-col gap-4 rounded-[22px] border border-[#e8e1ef] bg-white p-5 shadow-[0_5px_16px_rgba(65,50,91,.035)] transition hover:-translate-y-0.5 hover:border-[#d7c7e8] hover:shadow-[0_12px_26px_rgba(65,50,91,.07)] sm:flex-row sm:items-center sm:justify-between sm:p-6" data-testid="button-open-my-work">
+      <div className="flex items-start gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-[#f2ebfa] text-[#8060ae]"><FolderOpen size={21}/></div><div><div className="font-display text-[16px] font-extrabold tracking-[-.025em]">Your revision desk</div><p className="mt-1 max-w-[650px] text-[11px] leading-relaxed text-[#837c8e]">Write revision notes and keep your worksheets, summaries, and study files together. Saved in this browser only.</p></div></div>
+      <span className="inline-flex min-h-10 items-center gap-2 self-start rounded-xl bg-[#8060ae] px-4 py-2 text-[11px] font-bold text-white transition group-hover:bg-[#6f509b] sm:self-auto">Open My Work <ArrowRight size={14}/></span>
+    </Link>
     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
       <div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#948da0]">Explore the library</p><h2 className="mt-1 font-display text-[23px] font-extrabold tracking-[-.04em]">Choose a subject</h2></div>
       <span className="text-[11px] text-[#8b8497]" data-testid="text-subject-count">{subjects.length} subjects · {modules.length} modules</span>
@@ -333,6 +341,237 @@ function AchievementsPage() {
       </div>;
     })}</div>
     <div className="mt-7 rounded-2xl border border-[#ebe8ef] bg-white px-5 py-4 text-[10px] leading-relaxed text-[#827b8e]" data-testid="text-token-disclaimer"><Award size={14} className="mr-2 inline text-[#a8874e]"/>These are local achievement tokens stored in your browser. They are not minted blockchain NFTs.</div>
+  </div>;
+}
+
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const ALLOWED_FILE_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'md', 'csv', 'png', 'jpg', 'jpeg', 'webp']);
+
+function workStorageError(error: unknown): string {
+  if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+    return 'This browser is out of storage space. Remove older files or choose smaller files, then try again.';
+  }
+  if (error instanceof Error && error.message.includes('busy in another StudyMe tab')) return error.message;
+  return 'StudyMe could not save this item in your browser. Check your available browser storage and try again.';
+}
+
+function formatWorkSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function MyWorkPage() {
+  const { routeBase, workScope } = useStudy();
+  const [items, setItems] = useState<StudyWorkEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingNote, setSavingNote] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [noteSubjectId, setNoteSubjectId] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const savedItems = await listStudyWork(workScope);
+      savedItems.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setItems(savedItems);
+      setError('');
+    } catch (storageError) {
+      setItems([]);
+      setError(workStorageError(storageError));
+    } finally {
+      setLoading(false);
+    }
+  }, [workScope]);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  const notes = items.filter((item): item is NoteWorkEntry => item.kind === 'note');
+  const files = items.filter((item): item is FileWorkEntry => item.kind === 'file');
+
+  const resetNoteForm = () => {
+    setNoteTitle('');
+    setNoteContent('');
+    setNoteSubjectId('');
+    setEditingNoteId(null);
+  };
+
+  const saveNote = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const title = noteTitle.trim();
+    const content = noteContent.trim();
+    if (!title || !content) {
+      setError('Add a title and some revision notes before saving.');
+      return;
+    }
+
+    const existing = editingNoteId ? notes.find((note) => note.id === editingNoteId) : undefined;
+    const now = new Date().toISOString();
+    setSavingNote(true);
+    setError('');
+    setSuccess('');
+    try {
+      await saveStudyWork({
+        id: editingNoteId ?? crypto.randomUUID(),
+        scope: workScope,
+        kind: 'note',
+        title,
+        content,
+        subjectId: noteSubjectId,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      });
+      resetNoteForm();
+      await reload();
+      setSuccess(existing ? 'Revision note updated on this device.' : 'Revision note saved on this device.');
+    } catch (storageError) {
+      setError(workStorageError(storageError));
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const beginEditing = (note: NoteWorkEntry) => {
+    setEditingNoteId(note.id);
+    setNoteTitle(note.title);
+    setNoteContent(note.content);
+    setNoteSubjectId(note.subjectId);
+    setError('');
+    setSuccess('');
+    document.getElementById('revision-note-title')?.focus();
+  };
+
+  const deleteItem = async (item: StudyWorkEntry) => {
+    const description = item.kind === 'file' ? `file “${item.fileName}”` : `note “${item.title}”`;
+    if (!window.confirm(`Delete this ${description} from this browser? This cannot be undone.`)) return;
+    setError('');
+    setSuccess('');
+    try {
+      await deleteStudyWork(workScope, item.id);
+      if (editingNoteId === item.id) resetNoteForm();
+      await reload();
+      setSuccess('Item deleted from this device.');
+    } catch (storageError) {
+      setError(workStorageError(storageError));
+    }
+  };
+
+  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (!selectedFiles.length) return;
+
+    setUploading(true);
+    setError('');
+    setSuccess('');
+    const rejected: string[] = [];
+    let savedCount = 0;
+    for (const file of selectedFiles) {
+      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (!ALLOWED_FILE_EXTENSIONS.has(extension)) {
+        rejected.push(`${file.name}: choose a PDF, Office, text, spreadsheet, or image file.`);
+        continue;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        rejected.push(`${file.name}: files must be 20 MB or smaller.`);
+        continue;
+      }
+      const now = new Date().toISOString();
+      try {
+        await saveStudyWork({
+          id: crypto.randomUUID(),
+          scope: workScope,
+          kind: 'file',
+          title: file.name,
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+          file,
+          createdAt: now,
+          updatedAt: now,
+        });
+        savedCount += 1;
+      } catch (storageError) {
+        rejected.push(`${file.name}: ${workStorageError(storageError)}`);
+      }
+    }
+    await reload();
+    setUploading(false);
+    if (savedCount) setSuccess(`${savedCount} ${savedCount === 1 ? 'file' : 'files'} saved in this browser.`);
+    if (rejected.length) setError(rejected.join(' '));
+  };
+
+  const downloadFile = (file: FileWorkEntry) => {
+    const objectUrl = URL.createObjectURL(file.file);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = file.fileName;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  };
+
+  return <div className="page-in mx-auto max-w-[1120px]">
+    <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div><div className="mb-2 inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#8c8499]"><FolderOpen size={14} className="text-[#8060ae]"/>Your study space</div><h1 className="font-display text-[34px] font-extrabold tracking-[-.05em]" data-testid="text-my-work-heading">My Work</h1><p className="mt-2 max-w-[650px] text-[13px] leading-relaxed text-[#817b8e]">Keep revision notes and study files together, ready whenever you need them.</p></div>
+      <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#e8e2ee] bg-white px-3 py-2 text-[10px] font-bold text-[#746785]" data-testid="badge-local-storage"><CheckCircle2 size={13} className="text-[#629476]"/>Stored in this browser</div>
+    </div>
+    <div className="mb-5 flex items-start gap-3 rounded-2xl border border-[#e9e0f1] bg-[#f7f2fb] px-4 py-3.5 text-[11px] leading-relaxed text-[#72627f]" role="note" data-testid="notice-browser-storage"><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-[#8060ae]"/><p>Your notes and files stay on this device and are separate for your account and the guest demo. They do not sync to other devices; clearing this browser’s site data may remove them.</p></div>
+
+    {(error || success) && <div className={cx('mb-5 rounded-xl border px-4 py-3 text-[11px] leading-relaxed', error ? 'border-[#efd4d1] bg-[#fff5f3] text-[#955b55]' : 'border-[#d8eadb] bg-[#f0f8f1] text-[#4c7757]')} role={error ? 'alert' : 'status'} aria-live="polite" data-testid={error ? 'text-work-error' : 'text-work-success'}>{error || success}</div>}
+
+    <div className="mb-7 grid gap-4 lg:grid-cols-[1.1fr_.9fr]">
+      <section className="rounded-[22px] border border-[#ebe8ef] bg-white p-5 sm:p-6" data-testid="panel-revision-notes">
+        <div className="mb-5 flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-[#eee8f7] text-[#8060ae]"><FileText size={18}/></div><div><h2 className="font-display text-[15px] font-extrabold">Revision notes</h2><p className="text-[10px] text-[#918a9c]">Write a summary or save something to review later.</p></div></div>
+        <form onSubmit={saveNote} className="space-y-3">
+          <div><label htmlFor="revision-note-title" className="mb-1.5 block text-[10px] font-bold text-[#625b70]">Note title</label><input id="revision-note-title" value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} maxLength={100} required placeholder="e.g. Photosynthesis key points" data-testid="input-note-title" className="h-10 w-full rounded-xl border border-[#e8e3ed] bg-[#fcfbfd] px-3 text-[12px] outline-none focus:border-[#a68bc9] focus:ring-2 focus:ring-[#a68bc9]/15"/></div>
+          <div><label htmlFor="revision-note-subject" className="mb-1.5 block text-[10px] font-bold text-[#625b70]">Subject</label><select id="revision-note-subject" value={noteSubjectId} onChange={(event) => setNoteSubjectId(event.target.value)} data-testid="select-note-subject" className="h-10 w-full rounded-xl border border-[#e8e3ed] bg-[#fcfbfd] px-3 text-[12px] text-[#625b70] outline-none focus:border-[#a68bc9]"><option value="">General revision</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></div>
+          <div><label htmlFor="revision-note-content" className="mb-1.5 block text-[10px] font-bold text-[#625b70]">Your notes</label><textarea id="revision-note-content" value={noteContent} onChange={(event) => setNoteContent(event.target.value)} maxLength={12000} required rows={5} placeholder="Write ideas, reminders, or questions to revisit…" data-testid="input-note-content" className="w-full resize-y rounded-xl border border-[#e8e3ed] bg-[#fcfbfd] px-3 py-2.5 text-[12px] leading-relaxed outline-none focus:border-[#a68bc9] focus:ring-2 focus:ring-[#a68bc9]/15"/></div>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">{editingNoteId && <button type="button" onClick={resetNoteForm} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#e8e3ed] px-4 py-2 text-[11px] font-bold text-[#716a7d]" data-testid="button-cancel-note-edit"><X size={14}/>Cancel</button>}<button type="submit" disabled={savingNote} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#8060ae] px-4 py-2 text-[11px] font-bold text-white hover:bg-[#6f509b] disabled:opacity-60" data-testid="button-save-note">{savingNote ? <span className="animate-pulse">Saving…</span> : <><Save size={14}/>{editingNoteId ? 'Save changes' : 'Save note'}</>}</button></div>
+        </form>
+      </section>
+
+      <section className="flex flex-col rounded-[22px] border border-[#ebe8ef] bg-white p-5 sm:p-6" data-testid="panel-study-files">
+        <div className="mb-5 flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-[#fbf1dc] text-[#a7833e]"><FileUp size={18}/></div><div><h2 className="font-display text-[15px] font-extrabold">Study files</h2><p className="text-[10px] text-[#918a9c]">Save handouts, notes, and revision material here.</p></div></div>
+        <label htmlFor="study-file-upload" className="flex min-h-[170px] cursor-pointer flex-1 flex-col items-center justify-center rounded-[18px] border border-dashed border-[#d8cbe6] bg-[#fbf9fd] px-4 py-6 text-center transition hover:border-[#a98acb] hover:bg-[#f8f3fc]">
+          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-[15px] bg-[#eee8f7] text-[#8060ae]"><FileUp size={20}/></span>
+          <span className="text-[12px] font-extrabold text-[#4e465e]">{uploading ? 'Saving your files…' : 'Choose files to upload'}</span>
+          <span className="mt-1 text-[10px] leading-relaxed text-[#8b8497]">PDF, Office, text, spreadsheet, or image · up to 20 MB each</span>
+          <input ref={fileInputRef} id="study-file-upload" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv,.png,.jpg,.jpeg,.webp" onChange={uploadFiles} disabled={uploading} className="sr-only" data-testid="input-study-file"/>
+        </label>
+        <p className="mt-3 text-[9px] leading-relaxed text-[#938d9c]">Files are saved in this browser only and are not uploaded to a server.</p>
+      </section>
+    </div>
+
+    <div className="grid gap-5 lg:grid-cols-2">
+      <section data-testid="section-saved-notes">
+        <div className="mb-3 flex items-end justify-between gap-3"><div><h2 className="font-display text-[18px] font-extrabold tracking-[-.03em]">Saved revision notes</h2><p className="mt-1 text-[10px] text-[#8c8596]">{notes.length} {notes.length === 1 ? 'note' : 'notes'}</p></div></div>
+        {loading ? <div className="rounded-[18px] border border-[#ebe8ef] bg-white p-5 text-[11px] text-[#8c8596]" aria-live="polite">Loading your notes…</div> : notes.length ? <div className="space-y-3">{notes.map((note) => {
+          const subjectName = subjects.find((subject) => subject.id === note.subjectId)?.name ?? 'General revision';
+          return <article key={note.id} className="rounded-[18px] border border-[#ebe8ef] bg-white p-4 sm:p-5" data-testid={`card-note-${note.id}`}>
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words font-display text-[13px] font-extrabold text-[#40394f]">{note.title}</h3><p className="mt-1 text-[9px] text-[#938d9c]">{subjectName} · Updated {new Date(note.updatedAt).toLocaleDateString()}</p></div><FileText size={16} className="shrink-0 text-[#9b80ba]"/></div>
+            <details className="mt-3 rounded-xl bg-[#f8f6fa] px-3 py-2.5"><summary className="cursor-pointer text-[10px] font-bold text-[#76658b]">Read note</summary><p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-[#6f687c]">{note.content}</p></details>
+            <div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => beginEditing(note)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[#e8e3ed] px-2.5 text-[10px] font-bold text-[#6f657e] hover:bg-[#faf8fc]" data-testid={`button-edit-note-${note.id}`}><Pencil size={12}/>Edit</button><button type="button" onClick={() => void deleteItem(note)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[#eedbd9] px-2.5 text-[10px] font-bold text-[#a05d57] hover:bg-[#fff7f5]" data-testid={`button-delete-note-${note.id}`}><Trash2 size={12}/>Delete</button></div>
+          </article>;
+        })}</div> : <div className="rounded-[18px] border border-dashed border-[#ded9e5] bg-white p-5 text-[11px] leading-relaxed text-[#8c8596]" data-testid="empty-saved-notes">No revision notes yet. Add a note above to start your collection.</div>}
+      </section>
+
+      <section data-testid="section-saved-files">
+        <div className="mb-3 flex items-end justify-between gap-3"><div><h2 className="font-display text-[18px] font-extrabold tracking-[-.03em]">Saved study files</h2><p className="mt-1 text-[10px] text-[#8c8596]">{files.length} {files.length === 1 ? 'file' : 'files'}</p></div></div>
+        {loading ? <div className="rounded-[18px] border border-[#ebe8ef] bg-white p-5 text-[11px] text-[#8c8596]" aria-live="polite">Loading your files…</div> : files.length ? <div className="space-y-3">{files.map((file) => <article key={file.id} className="rounded-[18px] border border-[#ebe8ef] bg-white p-4" data-testid={`card-file-${file.id}`}>
+          <div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-[#f2eef8] text-[#8060ae]"><FileText size={18}/></div><div className="min-w-0 flex-1"><h3 className="break-words text-[11px] font-extrabold text-[#4b445b]">{file.fileName}</h3><p className="mt-1 text-[9px] text-[#938d9c]">{formatWorkSize(file.size)} · Added {new Date(file.createdAt).toLocaleDateString()}</p></div></div>
+          <div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => downloadFile(file)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[#e8e3ed] px-2.5 text-[10px] font-bold text-[#6f657e] hover:bg-[#faf8fc]" data-testid={`button-download-file-${file.id}`}><Download size={12}/>Download</button><button type="button" onClick={() => void deleteItem(file)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[#eedbd9] px-2.5 text-[10px] font-bold text-[#a05d57] hover:bg-[#fff7f5]" data-testid={`button-delete-file-${file.id}`}><Trash2 size={12}/>Delete</button></div>
+        </article>)}</div> : <div className="rounded-[18px] border border-dashed border-[#ded9e5] bg-white p-5 text-[11px] leading-relaxed text-[#8c8596]" data-testid="empty-saved-files">No files saved yet. Upload a worksheet or revision resource above.</div>}
+      </section>
+    </div>
+    <div className="mt-6 flex items-center gap-2 rounded-xl border border-[#ebe8ef] bg-white px-4 py-3 text-[10px] leading-relaxed text-[#877f91]" data-testid="text-my-work-counts"><FileText size={14} className="shrink-0 text-[#9274b1]"/>{notes.length} notes · {files.length} files saved on this device. <Link href={appHref(routeBase)} className="font-bold text-[#8060ae] hover:underline">Back to learning</Link></div>
   </div>;
 }
 

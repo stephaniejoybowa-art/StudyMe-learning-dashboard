@@ -20,6 +20,7 @@ const files = [
   "src/components/error-boundary.tsx",
   "src/data/curriculum.ts",
   "src/index.css",
+  "src/lib/work-storage.ts",
   "src/main.tsx",
   "src/pages/not-found.tsx",
 ];
@@ -144,6 +145,10 @@ Open the local Vite address shown in the terminal. Choose **Explore the demo** t
 Study a lesson to earn its module token, then pass its three-question quiz to earn a separate quiz token. Education-stage choices, lesson progress, scores, and tokens save in this browser. Demo progress and signed-in account progress are kept separate on this device; they do not sync across devices yet.
 
 These rewards are local achievement tokens, not NFTs minted on NEAR. On-chain rewards require a wallet connection and a deployed compatible NFT contract.
+
+## My Work
+
+Create and edit revision notes, tag them by subject, and save study files in the My Work area. Files up to 20 MB are supported in PDF, Office, text, spreadsheet, and image formats. Notes and file bytes are stored in this browser only, with separate spaces for the guest demo and each signed-in account. They do not sync to other devices, and clearing browser site data may remove them.
 `,
 );
 
